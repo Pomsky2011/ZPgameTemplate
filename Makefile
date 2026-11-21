@@ -1,171 +1,77 @@
-# =============================================================================
-# ZeroPoint ROM build template
-# =============================================================================
-# Copy this Makefile into your game/software project and edit the "PROJECT"
-# section below. It drives the ZeroPoint devtools (cpuasm / ppuasm / apuasm /
-# def88186cc):  cpuasm/... -> zplink (-> ELF) -> zpbuild (-> signed .zpb)
+# ZeroPoint game template: C game on the layers library, art from PNGs.
 #
-#   make               build + locally sign  -> build/<ROM>.zpb
-#   make elf           dev link only         -> build/<ROM>.elf  (submit this to HQ)
-#   make PLATFORM=dos  build on MS-DOS via DJGPP
+#   make              # build/game.zpb with zpcc (the clang compiler), signed with the dev key
+#   make CC=dos       # the same with def88186cc (-DZP_CC_DOS); use BUILD=build-dos to keep both
+#   make run          # zeropoint_sdl build/game.zpb
+#   make elf          # build/game.elf: the unsigned link, what you submit to HQ to ship
+#   make ASSETS=dir   # take assets.json and the PNGs from another directory
 #   make clean
-#   make help
 #
-# Expected project layout (all sources optional except CPU):
-#   cpu/main.asm   (or main.c — compiled by def88186cc)
-#   ppu/graphics.asm
-#   apu/audio.asm
-#
-# SIGNING: zplink holds no key — it only emits the ELF. zpbuild turns that ELF
-# into a signed .zpb, and it carries the bundled *development* key, so `make`
-# produces a ROM the emulator loads for local testing. A production ROM is
-# signed at HQ with the real key: ship `build/<ROM>.elf`, not a locally-signed
-# .zpb. On real hardware only HQ-signed ROMs are trusted.
-#
-# NOTE ON MS-DOS: the devtools ship as real-mode DOS .exe's, so this Makefile
-# runs on a 1990s box — but it needs *GNU* make (DJGPP's `make`), because it
-# uses conditionals and functions Borland/Turbo MAKE don't understand.
-# =============================================================================
+# ZPDEV is the toolchain checkout (executables/, include/, lib/, scripts/, ucode/, llvm_compiler/, c_compiler/, all built: `make` in each).
+# Inside ZPdevtools this repo is the submodule game-template, so the default is `..`; copied out, say where it is:
+#   make ZPDEV=/path/to/ZPdevtools
+# Needs python3 with Pillow (png2zp reads the PNGs).
+ZPDEV  ?= ..
+BIN     = $(ZPDEV)/executables
+CC     ?= zpcc
+EMU    ?= $(firstword $(wildcard $(ZPDEV)/../ZeroPoint/build/bin/zeropoint_sdl) zeropoint_sdl)
+BUILD  ?= build
+ASSETS ?= assets
 
-# ---- PROJECT (edit these) ---------------------------------------------------
-# NOTE: keep values free of trailing spaces — make does not trim them, and a
-# stray space in ROM/paths would break the target names. That's why the
-# comments here sit on their own lines instead of after the values.
+GAME   ?= game
+TITLE  ?= MY ZEROPOINT GAME
+DEV    ?= ZP
 
-# Output basename, embedded ROM title, developer/author tag.
-ROM   := game
-TITLE := My ZeroPoint Game
-DEV   := ZP
+# Where things sit in ROM: the CPU program, the layers microcode and the converted art.
+CPU_BASE    = 0x8000
+LAYERS_BASE = 0x100000
+ASSETS_BASE = 0x110000
 
-# Component sources. CPU may be .asm or .c (def88186cc). PPU/APU: blank to omit.
-CPU_SRC := cpu/main.asm
-PPU_SRC := ppu/graphics.asm
-APU_SRC := apu/audio.asm
-
-# Load addresses (defaults match the console memory map).
-ENTRY    := 0x8000
-CPU_BASE := 0x8000
-PPU_BASE := 0x100000
-APU_BASE := 0x200000
-
-# ---- Toolchain location (override on the command line if needed) ------------
-# Points at ZPdevtools/executables. def88186cc usually lives in c_compiler/.
-ZPTOOLS ?= ../executables
-ZPCC    ?= ../c_compiler/def88186cc
-
-# ---- Platform ---------------------------------------------------------------
-ifeq ($(OS),Windows_NT)
-  PLATFORM ?= windows
+ifeq ($(CC),dos)
+  COMPILE = $(ZPDEV)/c_compiler/def88186cc -DZP_CC_DOS
 else
-  PLATFORM ?= unix
-endif
-ifeq ($(filter dos windows,$(PLATFORM)),)
-  EXE :=
-else
-  # DOS/Windows tool binaries end in .exe (no trailing space — see note above).
-  EXE := .exe
+  COMPILE = $(ZPDEV)/llvm_compiler/zpcc
 endif
 
-# ---- Resolved tools ---------------------------------------------------------
-CPUASM     := $(ZPTOOLS)/cpuasm$(EXE)
-PPUASM     := $(ZPTOOLS)/ppuasm$(EXE)
-APUASM     := $(ZPTOOLS)/apuasm$(EXE)
-ZPLINK     := $(ZPTOOLS)/zplink$(EXE)
-ZPBUILD    := $(ZPTOOLS)/zpbuild$(EXE)
-CC88       := $(ZPCC)$(EXE)
+all: $(BUILD)/$(GAME).zpb
+elf: $(BUILD)/$(GAME).elf
 
-BUILD := build
-CPU_BIN := $(BUILD)/cpu.bin
-PPU_BIN := $(BUILD)/ppu.bin
-APU_BIN := $(BUILD)/apu.bin
-
-# =============================================================================
-# Component object lists + per-linker argument strings
-# =============================================================================
-COMPONENTS := $(CPU_BIN)
-ZL_ARGS    := --cpu $(CPU_BIN)@$(CPU_BASE)
-
-ifneq ($(strip $(PPU_SRC)),)
-  COMPONENTS += $(PPU_BIN)
-  ZL_ARGS    += --ppu $(PPU_BIN)@$(PPU_BASE)
-endif
-ifneq ($(strip $(APU_SRC)),)
-  COMPONENTS += $(APU_BIN)
-  ZL_ARGS    += --apu $(APU_BIN)@$(APU_BASE)
-endif
-
-# =============================================================================
-# Default goal
-# =============================================================================
-.PHONY: all elf sign clean help
-
-all: sign
-
-elf:  $(BUILD)/$(ROM).elf
-sign: $(BUILD)/$(ROM).zpb
-
-# =============================================================================
-# Assemble / compile the components
-# =============================================================================
-$(BUILD):
+# the microcode, padded to whole 256-byte pages (the Boot ROM loader copies pages); LAYERS_PAGES says how many
+$(BUILD)/layers.bin: $(ZPDEV)/ucode/layers/gen_layers.py
 	mkdir -p $(BUILD)
+	python3 $< -o $(BUILD)/layers.raw > /dev/null
+	python3 -c "d=open('$(BUILD)/layers.raw','rb').read(); d+=bytes(-len(d)%256); open('$@','wb').write(d); open('$(BUILD)/pages.txt','w').write(str(len(d)//256))"
 
-# --- CPU: .c is compiled to .asm first, then assembled; .asm is direct. ------
-ifeq ($(suffix $(CPU_SRC)),.c)
-$(BUILD)/cpu.asm: $(CPU_SRC) | $(BUILD)
-	$(CC88) $< -o $@
-$(CPU_BIN): $(BUILD)/cpu.asm
-	$(CPUASM) $< $@
-else
-$(CPU_BIN): $(CPU_SRC) | $(BUILD)
-	$(CPUASM) $< $@
-endif
+# assets/*.png (and Tiled maps) -> build/assets.bin + build/assets.h, driven by assets/assets.json
+$(BUILD)/assets.bin $(BUILD)/assets.h: $(ASSETS)/assets.json $(filter-out $(ASSETS)/assets.json,$(wildcard $(ASSETS)/*)) $(ZPDEV)/scripts/png2zp.py
+	python3 $(ZPDEV)/scripts/png2zp.py $(ASSETS)/assets.json -o $(BUILD) --rom-base $(ASSETS_BASE)
 
-# --- PPU: note ppuasm takes -o for the output. -------------------------------
-$(PPU_BIN): $(PPU_SRC) | $(BUILD)
-	$(PPUASM) $< -o $@
+$(BUILD)/main.asm: src/main.c $(BUILD)/assets.h $(BUILD)/layers.bin $(wildcard $(ZPDEV)/include/zeropoint/*.h)
+	$(COMPILE) -DLAYERS_PAGES=$$(cat $(BUILD)/pages.txt) -I $(ZPDEV)/include -I $(BUILD) src/main.c -o $@
 
-# --- APU: positional in/out. -------------------------------------------------
-$(APU_BIN): $(APU_SRC) | $(BUILD)
-	$(APUASM) $< $@
+# crt0 (the entry stub), the compiled program, then the runtime it calls (peek/poke, COP, 32-bit arithmetic)
+$(BUILD)/$(GAME).asm: $(BUILD)/main.asm
+	printf '.org $(CPU_BASE)\n.include "$(abspath $(ZPDEV))/lib/crt0_entry.asm"\n.include "$(abspath $<)"\n.include "$(abspath $(ZPDEV))/lib/zp_mmio.asm"\n.include "$(abspath $(ZPDEV))/lib/zp_cop.asm"\n.include "$(abspath $(ZPDEV))/lib/zp_long.asm"\n' > $@
 
-# =============================================================================
-# Link + sign
-# =============================================================================
-# zplink: place the flat segments at their load addresses and emit an ELF.
-# This is the dev-side deliverable (no signing key). Submit it to HQ to ship.
-$(BUILD)/$(ROM).elf: $(COMPONENTS)
-	$(ZPLINK) -o $@ $(ZL_ARGS) --entry $(ENTRY)
+$(BUILD)/$(GAME).bin: $(BUILD)/$(GAME).asm
+	$(BIN)/cpuasm $< $@
 
-# zpbuild: sign the ELF into a .zpb ROM. Locally this uses the bundled dev key
-# (emulator-loadable); at HQ the same tool is built against the production key.
-# --codesize N --trailer 2: the console's BLAKE2s engine hashes the whole ROM at boot.
-# Without them the real Boot ROM hashes it in software, which for anything over a few KB
-# never finishes (the splash stays up). N covers the CPU program, rounded up to 256 bytes,
-# counted from address 0 (the program starts at CPU_BASE).
-CODESIZE = $$(python3 -c "import os; print(($(CPU_BASE) + os.path.getsize('$(CPU_BIN)') + 255) // 256 * 256)")
-$(BUILD)/$(ROM).zpb: $(BUILD)/$(ROM).elf
-	$(ZPBUILD) $< -o $@ --title "$(TITLE)" --dev "$(DEV)" --codesize $(CODESIZE) --trailer 2
+$(BUILD)/$(GAME).elf: $(BUILD)/$(GAME).bin $(BUILD)/layers.bin $(BUILD)/assets.bin
+	$(BIN)/zplink -o $@ --cpu $(BUILD)/$(GAME).bin@$(CPU_BASE) --ppu $(BUILD)/layers.bin@$(LAYERS_BASE) --data $(BUILD)/assets.bin@$(ASSETS_BASE) --entry $(CPU_BASE)
 
-# =============================================================================
-# Housekeeping
-# =============================================================================
+# zpbuild signs the ELF into a .zpb with the bundled dev key (a ROM the emulator loads; real hardware only trusts HQ's key: ship the .elf).
+# --codesize N --trailer 2: the console's BLAKE2s engine hashes the whole ROM at boot in a fraction of a second. Without them the real Boot ROM
+# hashes the ROM in software, which for a ROM this size never finishes (the lightning splash stays up for good). N covers the CPU program.
+$(BUILD)/$(GAME).zpb: $(BUILD)/$(GAME).elf
+	$(BIN)/zpbuild $< -o $@ --title "$(TITLE)" --dev "$(DEV)" --codesize $$(python3 -c "import os; print(($(CPU_BASE) + os.path.getsize('$(BUILD)/$(GAME).bin') + 255) // 256 * 256)") --trailer 2
+
+run: $(BUILD)/$(GAME).zpb
+	$(EMU) $<
+
 clean:
 	rm -rf $(BUILD)
 
 help:
-	@echo "ZeroPoint ROM build template"
-	@echo
-	@echo "Targets:"
-	@echo "  all (default)  signed .zpb (zplink+zpbuild)"
-	@echo "  elf            build/$(ROM).elf  - zplink output; submit this to HQ to ship"
-	@echo "  sign           build/$(ROM).zpb  - zpbuild-signed ROM (dev key, emulator-loadable)"
-	@echo "  clean          remove build/"
-	@echo
-	@echo "Options (VAR=value):"
-	@echo "  PLATFORM   unix (default) | dos | windows   (dos/windows => .exe tools)"
-	@echo "  ROM TITLE DEV                                output name + metadata"
-	@echo "  CPU_SRC PPU_SRC APU_SRC                      component sources (.asm/.c)"
-	@echo "  ENTRY CPU_BASE PPU_BASE APU_BASE             load addresses"
-	@echo "  ZPTOOLS    path to ZPdevtools/executables"
-	@echo "  ZPCC       path to def88186cc (C compiler)"
+	@sed -n '2,13p' Makefile
+
+.PHONY: all elf run clean help

@@ -1,0 +1,13 @@
+{
+  "bg0": {"image": "ground.png"},
+  "bg1": {"image": "clouds.png"},
+  "sprites": [
+    {"name": "hero", "image": "hero.png"},
+    {"name": "bird", "image": "bird.png"}
+  ],
+  "font": {"image": "font.png", "first": 32},
+  "frame": "frame.png",
+  "boxes": [
+    {"name": "msg", "w": 28, "h": 5, "border": true, "pad": 2, "lines": ["ZEROPOINT", "", "LAYERS"]}
+  ]
+}

@@ -1,5 +1,4 @@
 build/
+build-*/
 *.zpb
 *.elf
-*.rom
-*.bin

@@ -1,61 +1,62 @@
 # ZeroPoint Game Template
 
-A minimal, buildable skeleton for a ZeroPoint game. Copy it, edit the sources
-and the `PROJECT` block in the `Makefile`, and `make` produces a signed ROM the
-emulator can load.
+A small game for the ZeroPoint console, built on the C layers library: two scrolling tile layers, sprites, a text box. Put your own PNGs in
+`assets/`, run `make`, get a signed ROM that boots on the real Boot ROM.
 
-This repo is also vendored into the [ZPdevtools](../ZPdevtools) toolchain as a
-git submodule at `ZPdevtools/game-template`, so the default toolchain paths in
-the `Makefile` point one level up at `../executables` and `../c_compiler`. If
-you copy this template out to a project of your own, point the tools at your
-ZPdevtools checkout instead:
+```
+src/main.c          the game: what moves, when (C, builds with zpcc and with def88186cc)
+assets/             art: *.png and assets.json, which says what each image is (see below)
+tools/make_art.py   draws the sample art; you will not need it once you have your own
+Makefile            PNGs -> assets, C -> ROM, sign
+```
+
+## Build and run
+
+You need the toolchain built (`make` in ZPdevtools, `llvm_compiler/` and/or `c_compiler/`), python3 with Pillow, and the emulator.
 
 ```sh
-make ZPTOOLS=/path/to/ZPdevtools/executables ZPCC=/path/to/ZPdevtools/c_compiler/def88186cc
+make                          # build/game.zpb with zpcc (clang); signed with the dev key
+make CC=dos                   # the same with def88186cc (BUILD=build-dos keeps both)
+make run                      # zeropoint_sdl build/game.zpb
+make elf                      # build/game.elf, the unsigned link: what you submit to HQ to ship
+make ASSETS=other-art         # take assets.json and the PNGs from another directory
 ```
 
-## Layout
+This repo is the submodule `game-template` of ZPdevtools, so `ZPDEV` (the toolchain checkout) defaults to `..`. Copied out to a project of your
+own, say where it is: `make ZPDEV=/path/to/ZPdevtools`. The emulator is found next to ZPdevtools (`../ZeroPoint/build/bin/zeropoint_sdl`) or on
+`PATH`; override with `EMU=`.
 
-```
-cpu/main.asm       DEF88186 CPU program (entry point). May be main.c instead — def88186cc compiles it.
-ppu/graphics.asm   PPU microcode (optional — blank PPU_SRC to omit).
-apu/audio.asm      APU program (optional — blank APU_SRC to omit).
-Makefile           Drives the ZPdevtools toolchain. Edit the PROJECT block.
-```
+## The art
 
-## Building
+`assets/assets.json` lists the images; `scripts/png2zp.py` in ZPdevtools converts them (full reference: `docs/tools/png2zp.md` there):
 
-```sh
-make            # assemble + link + sign  -> build/<ROM>.zpb   (loadable in the emulator)
-make elf        # dev link only           -> build/<ROM>.elf   (submit THIS to HQ to ship)
-make clean
-make help       # full option list
-```
+| In `assets.json` | Image | Becomes |
+|---|---|---|
+| `bg0` | any size up to 512x512, **opaque** | the back scrolling layer (tile bank 0) |
+| `bg1` | up to 512x512, transparent where the layer is see-through | the front layer (bank 2); or `"tiled"`: a Tiled `.tmj` map |
+| `sprites` | one PNG each, `frame_w`/`frame_h` in tiles for sheets | sprite cells (bank 1) and `ASSET_SPR_<NAME>_*` constants |
+| `font`, `frame`, `boxes` | an 8x8-glyph sheet, a border tile; text in the JSON | window text boxes (bank 3) |
 
-The link path: `cpuasm/ppuasm/apuasm` → `zplink` (ELF) → `zpbuild` (signed `.zpb`).
+Rules of thumb: **indexed-colour PNGs** (or `--quantize`), image sizes in multiples of 8, at most **240 opaque colours** across the whole game,
+at most 256 different tiles per layer (identical tiles are stored once, `"flips": true` also folds mirror images). Transparency is PNG transparency.
+Swap `ground.png`, `make`, and the picture changes; no C changes.
 
-## Running
+## The code
 
-```sh
-zeropoint_sdl build/<ROM>.zpb      # or the Qt / Vulkan frontend
-```
+`src/main.c` is the whole loop: load palette, tiles, maps and cells (`zpl_*_load` with the `ASSET_*` addresses from the generated
+`build/assets.h`), place sprites, `zpl_start()`, then every frame move things, `zpl_scroll`, `zpl_frame()` (waits for the 60 Hz tick and sends the
+frame). The library (`zp_layers.h`, `zp_pad.h`) is documented in `docs/sdk/README.md` in ZPdevtools. Notes that matter:
 
-## Signing, in one paragraph
+- The C compilers have no writable globals, `typedef`/`static`/`const`, or struct values (`def88186cc`); `main` is written `int main()`. Build
+  with both compilers now and then, `make CC=dos`.
+- Tiles are uploaded before `zpl_start()` only. Maps and sprite cells are read as drawn.
+- A ROM over a few KB must be signed with `--codesize N --trailer 2` or the real Boot ROM hashes it in software and never finishes; the Makefile does it.
+- Test on the real Boot ROM (`zeropoint_sdl --boot ...`), not only the native boot: it hands off in a different machine state.
 
-`zplink` holds no key — it only emits the ELF. `zpbuild` turns that ELF into a
-signed `.zpb`; locally it uses the bundled **development** key, so `make`
-produces a ROM the emulator trusts for testing. Real hardware only trusts
-**HQ-signed** ROMs, so to ship you submit `build/<ROM>.elf` (from `make elf`),
-not a locally-signed `.zpb`.
+ZPdevtools' `tests/layers/run.sh` builds this repo with both compilers, runs it on the native boot and the real Boot ROM, and compares frames
+pixel for pixel against the sample art (so it expects the sample art; your own game needs its own checks).
 
-## Options
+## Signing
 
-Everything is overridable on the command line — see `make help`. The common ones:
-
-| Var | Default | Meaning |
-|-----|---------|---------|
-| `ROM` `TITLE` `DEV` | `game` / `My ZeroPoint Game` / `ZP` | output name + embedded metadata |
-| `CPU_SRC` `PPU_SRC` `APU_SRC` | `cpu/main.asm` etc. | component sources (`.asm` or `.c` for CPU) |
-| `ENTRY` `CPU_BASE` `PPU_BASE` `APU_BASE` | console memory map | load addresses |
-| `PLATFORM` | `unix` | `dos` / `windows` (`.exe` tools) |
-| `ZPTOOLS` `ZPCC` | `../executables`, `../c_compiler/def88186cc` | toolchain locations |
+`zplink` holds no key: it only emits the ELF. `zpbuild` signs the ELF into a `.zpb` with the bundled **development** key, which the emulator trusts.
+Real hardware only trusts HQ-signed ROMs, so to ship you submit `build/game.elf` (`make elf`), not the locally signed `.zpb`.
