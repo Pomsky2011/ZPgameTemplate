@@ -12,6 +12,9 @@
 #   make ZPDEV=/path/to/ZPdevtools
 # Needs python3 with Pillow (png2zp reads the PNGs).
 ZPDEV  ?= ..
+ifeq ($(wildcard $(ZPDEV)/scripts/png2zp.py),)
+$(error ZPDEV=$(ZPDEV) is not a ZPdevtools checkout (no scripts/png2zp.py): say where it is, make ZPDEV=/path/to/ZPdevtools)
+endif
 BIN     = $(ZPDEV)/executables
 CC     ?= zpcc
 EMU    ?= $(firstword $(wildcard $(ZPDEV)/../ZeroPoint/build/bin/zeropoint_sdl) zeropoint_sdl)
