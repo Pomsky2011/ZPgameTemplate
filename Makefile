@@ -139,8 +139,13 @@ $(BUILD)/$(ROM).elf: $(COMPONENTS)
 
 # zpbuild: sign the ELF into a .zpb ROM. Locally this uses the bundled dev key
 # (emulator-loadable); at HQ the same tool is built against the production key.
+# --codesize N --trailer 2: the console's BLAKE2s engine hashes the whole ROM at boot.
+# Without them the real Boot ROM hashes it in software, which for anything over a few KB
+# never finishes (the splash stays up). N covers the CPU program, rounded up to 256 bytes,
+# counted from address 0 (the program starts at CPU_BASE).
+CODESIZE = $$(python3 -c "import os; print(($(CPU_BASE) + os.path.getsize('$(CPU_BIN)') + 255) // 256 * 256)")
 $(BUILD)/$(ROM).zpb: $(BUILD)/$(ROM).elf
-	$(ZPBUILD) $< -o $@ --title "$(TITLE)" --dev "$(DEV)"
+	$(ZPBUILD) $< -o $@ --title "$(TITLE)" --dev "$(DEV)" --codesize $(CODESIZE) --trailer 2
 
 # =============================================================================
 # Housekeeping
