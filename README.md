@@ -28,15 +28,11 @@ Makefile           Drives the ZPdevtools toolchain. Edit the PROJECT block.
 ```sh
 make            # assemble + link + sign  -> build/<ROM>.zpb   (loadable in the emulator)
 make elf        # dev link only           -> build/<ROM>.elf   (submit THIS to HQ to ship)
-make classic    # legacy rombuilder path  -> build/<ROM>.rom + .txt
 make clean
 make help       # full option list
 ```
 
-The two link paths:
-
-- **modern** (default): `cpuasm/ppuasm/apuasm` → `zplink` (ELF) → `zpbuild` (signed `.zpb`)
-- **classic**: `cpuasm/ppuasm/apuasm` → `rombuilder` (`.rom` + `.txt` metadata)
+The link path: `cpuasm/ppuasm/apuasm` → `zplink` (ELF) → `zpbuild` (signed `.zpb`).
 
 ## Running
 
@@ -61,5 +57,5 @@ Everything is overridable on the command line — see `make help`. The common on
 | `ROM` `TITLE` `DEV` | `game` / `My ZeroPoint Game` / `ZP` | output name + embedded metadata |
 | `CPU_SRC` `PPU_SRC` `APU_SRC` | `cpu/main.asm` etc. | component sources (`.asm` or `.c` for CPU) |
 | `ENTRY` `CPU_BASE` `PPU_BASE` `APU_BASE` | console memory map | load addresses |
-| `PLATFORM` | `unix` | `dos` / `windows` (DOS defaults to the classic path, `.exe` tools) |
+| `PLATFORM` | `unix` | `dos` / `windows` (`.exe` tools) |
 | `ZPTOOLS` `ZPCC` | `../executables`, `../c_compiler/def88186cc` | toolchain locations |
