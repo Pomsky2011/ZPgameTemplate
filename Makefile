@@ -52,9 +52,9 @@ $(BUILD)/assets.bin $(BUILD)/assets.h: $(ASSETS)/assets.json $(filter-out $(ASSE
 $(BUILD)/main.asm: src/main.c $(BUILD)/assets.h $(BUILD)/layers.bin $(wildcard $(ZPDEV)/include/zeropoint/*.h)
 	$(COMPILE) -DLAYERS_PAGES=$$(cat $(BUILD)/pages.txt) -I $(ZPDEV)/include -I $(BUILD) src/main.c -o $@
 
-# crt0 (the entry stub), the compiled program, then the runtime it calls (peek/poke, COP, 32-bit arithmetic)
+# crt0 (the entry stub), the compiled program, then the runtime it calls (peek/poke, COP, 32-bit arithmetic, save RAM)
 $(BUILD)/$(GAME).asm: $(BUILD)/main.asm
-	printf '.org $(CPU_BASE)\n.include "$(abspath $(ZPDEV))/lib/crt0_entry.asm"\n.include "$(abspath $<)"\n.include "$(abspath $(ZPDEV))/lib/zp_mmio.asm"\n.include "$(abspath $(ZPDEV))/lib/zp_cop.asm"\n.include "$(abspath $(ZPDEV))/lib/zp_long.asm"\n' > $@
+	printf '.org $(CPU_BASE)\n.include "$(abspath $(ZPDEV))/lib/crt0_entry.asm"\n.include "$(abspath $<)"\n.include "$(abspath $(ZPDEV))/lib/zp_mmio.asm"\n.include "$(abspath $(ZPDEV))/lib/zp_cop.asm"\n.include "$(abspath $(ZPDEV))/lib/zp_long.asm"\n.include "$(abspath $(ZPDEV))/lib/zp_save.asm"\n' > $@
 
 $(BUILD)/$(GAME).bin: $(BUILD)/$(GAME).asm
 	$(BIN)/cpuasm $< $@
@@ -62,11 +62,14 @@ $(BUILD)/$(GAME).bin: $(BUILD)/$(GAME).asm
 $(BUILD)/$(GAME).elf: $(BUILD)/$(GAME).bin $(BUILD)/layers.bin $(BUILD)/assets.bin
 	$(BIN)/zplink -o $@ --cpu $(BUILD)/$(GAME).bin@$(CPU_BASE) --ppu $(BUILD)/layers.bin@$(LAYERS_BASE) --data $(BUILD)/assets.bin@$(ASSETS_BASE) --entry $(CPU_BASE)
 
+# SAVE_SIZE is the cartridge's battery save RAM (zpbuild --save-size: a power of two, 1K..512K; the emulator keeps it in build/game.sav).
+SAVE_SIZE ?= 1K
+
 # zpbuild signs the ELF into a .zpb with the bundled dev key (a ROM the emulator loads; real hardware only trusts HQ's key: ship the .elf).
 # --codesize N --trailer 2: the console's BLAKE2s engine hashes the whole ROM at boot in a fraction of a second. Without them the real Boot ROM
 # hashes the ROM in software, which for a ROM this size never finishes (the lightning splash stays up for good). N covers the CPU program.
 $(BUILD)/$(GAME).zpb: $(BUILD)/$(GAME).elf
-	$(BIN)/zpbuild $< -o $@ --title "$(TITLE)" --dev "$(DEV)" --codesize $$(python3 -c "import os; print(($(CPU_BASE) + os.path.getsize('$(BUILD)/$(GAME).bin') + 255) // 256 * 256)") --trailer 2
+	$(BIN)/zpbuild $< -o $@ --title "$(TITLE)" --dev "$(DEV)" --save-size $(SAVE_SIZE) --codesize $$(python3 -c "import os; print(($(CPU_BASE) + os.path.getsize('$(BUILD)/$(GAME).bin') + 255) // 256 * 256)") --trailer 2
 
 run: $(BUILD)/$(GAME).zpb
 	$(EMU) $<
@@ -74,7 +77,11 @@ run: $(BUILD)/$(GAME).zpb
 clean:
 	rm -rf $(BUILD)
 
+# forget the saved hero position (the emulator's game.sav)
+wipe-save:
+	rm -f $(BUILD)/$(GAME).sav
+
 help:
 	@sed -n '2,13p' Makefile
 
-.PHONY: all elf run clean help
+.PHONY: all elf run clean wipe-save help

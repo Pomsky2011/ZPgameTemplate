@@ -20,7 +20,15 @@ make CC=dos                   # the same with def88186cc (BUILD=build-dos keeps 
 make run                      # zeropoint_sdl build/game.zpb
 make elf                      # build/game.elf, the unsigned link: what you submit to HQ to ship
 make ASSETS=other-art         # take assets.json and the PNGs from another directory
+make wipe-save                # forget the saved hero position (build/game.sav)
 ```
+
+## Saving
+
+The cartridge has 1 KB of battery save RAM (`SAVE_SIZE` in the Makefile, passed to `zpbuild --save-size`) and the game keeps the hero's position in it, so
+it starts where you left it: move the hero, quit, run again. The emulator writes the bytes to `build/game.sav` next to the ROM. The code is the few
+lines using `zp_save_load` / `zp_save_store` in `src/main.c` (ZPdevtools' `include/zeropoint/zp_save.h`, which stores into two checksummed slots so a
+cut write can't lose the save); the emulator's `docs/cart-save.md` has the whole picture.
 
 This repo is the submodule `game-template` of ZPdevtools, so `ZPDEV` (the toolchain checkout) defaults to `..`. Copied out to a project of your
 own, say where it is: `make ZPDEV=/path/to/ZPdevtools`. The emulator is found next to ZPdevtools (`../ZeroPoint/build/bin/zeropoint_sdl`) or on
